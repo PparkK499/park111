@@ -1,0 +1,23 @@
+# include <ncurses.h>
+int main(){
+initscr();
+cbreak();
+noecho();
+curs_set(0);
+clear();
+keypad(stdscr,TRUE);
+int y=10,x=5;char lm;
+while((lm=getch())!='x'){
+switch(lm){
+case KEY_UP:y++;break;
+case KEY_DOWN:y--;break;
+case KEY_LEFT:x--;break;
+case KEY_RIGHT:x++;break;
+}
+move(y,x);
+printw("!");
+refresh();
+}
+endwin();
+ return 0；
+}
