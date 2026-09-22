@@ -1,0 +1,59 @@
+#include <ncurses.h>                                                                                                                                                               
+#include <string.h>                                                                                                                                                                
+#include <ctype.h>                                                                                                                                                                 
+#include <limits.h>                                                                                                                                                                
+                                                                                                                                                                                   
+#define MAX_LINE 256                                                                                                                                                               
+#define MAX_HEI 64                                                                                                                                                                 
+                                                                                                                                                                                   
+int main(void)                                                                                                                                                                     
+{                                                                                                                                                                                  
+    char input[MAX_HEI][MAX_LINE] = {0};                                                                                                                                           
+const size_t cap=sizeof(input);                                                                                                                                                    
+    if((initscr())==0){return 1;}                                                                                                                                                  
+    cbreak();                                                                                                                                                                      
+    noecho();                                                                                                                                                                      
+    keypad(stdscr,TRUE);                                                                                                                                                           
+    curs_set(1);                                                                                                                                                                   
+                                                                                                                                                                                   
+    char *buffer = (char *)&input;                                                                                                                                                 
+    int pos=0,hei=0,y=1,x=1;                                                                                                                                                       
+    for(;;){                                                                                                                                                                       
+        int row,col;                                                                                                                                                               
+        getmaxyx(stdscr,row,col);                                                                                                                                                  
+        int v_row=row-y-1,v_col=col-x-1;                                                                                                                                           
+        erase();                                                                                                                                                                   
+        for(int r=0;r<v_row && r< MAX_HEI;r++){                                                                                                                                    
+        for(int c=0;c<v_col && c<MAX_LINE;c++){                                                                                                                                    
+                unsigned char ch=(unsigned char)input[r][c];                                                                                                                       
+                mvaddch(y+r,x+c,ch=='\0'?' ':ch);                                                                                                                                  
+                }}refresh(); move(y+hei,x+pos);                                                                                                                                                                 
+        int lm=getch();                                                                                                                                                            
+        size_t index=(size_t)hei*MAX_LINE+pos;                                                                                                                                     
+        switch(lm){                                                                                                                                                                
+                case KEY_UP:                                                                                                                                                       
+                        if(hei>0)hei--;break;                                                                                                                                      
+                case KEY_DOWN:                                                                                                                                                     
+                if(hei<MAX_HEI-1)hei++;break;                                                                                                                                      
+                case KEY_LEFT:                                                                                                                                                     
+                        if(pos>0)pos--;                                                                                                                                            
+                        else if(hei>0){pos==MAX_LINE-1;hei--;}                                                                                                                     
+                        break;                                                                                                                                                     
+                case KEY_RIGHT:                                                                                                                                                    
+                        if(pos<MAX_LINE-1)pos++;                                                                                                                                   
+                        else if(hei<MAX_HEI-1){pos==0;hei++;}                                                                                                                      
+                        break;                                                                                                                                                     
+                        default :                                                                                                                                                  
+                                if(lm>=0&&lm<=UCHAR_MAX&&isprint((unsigned char)lm)){if(buffer[cap-1]!='\0')break;                                                                                                              
+                                        memmove(buffer+index+1,buffer+index,cap-index-1);                                                                                          
+                                        buffer[index]=(unsigned char)lm;                                                                                                           
+                                        if(index<cap-1){index++;                                                                                                                   
+                                        hei=(int)index/MAX_LINE;pos=(int)index%MAX_LINE;                                                                                           
+                                        break;                                                                                                                                     
+                                        }                                                                                                                                          
+                                }                                                                                                                                                  
+                                                                                                                                                                                   
+                        }   }                                                                                                                                                       
+                endwin();                                                                                                                                                          
+                return 0;                                                                                                                                                          
+        }
