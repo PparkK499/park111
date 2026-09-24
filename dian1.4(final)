@@ -1,0 +1,105 @@
+#include <ncurses.h>                                                                                                                                                               
+#include <string.h>                                                                                                                                                                
+#include <ctype.h>                                                                                                                                                                 
+#include <limits.h>                                                                                                                                                                
+#include<stdio.h>                                                                                                                                                                                   
+#define MAX_LINE 256                                                                                                                                                               
+#define MAX_HEI 64                                                                                                                                                                 
+                                                                                                                                                                                   
+int main(int argc,char *argv[])                                                                                                                                                                     
+{                                         
+FILE *fp;                                                                                                                             
+    char input[MAX_HEI][MAX_LINE] = {0};                                                                                                                                           
+
+if(argc<2){
+fprintf(stderr, " %s work\n", argv[0]);return 0;}                                                                                         
+if((fp=fopen(argv[1],"rb"))==NULL){
+      	perror("open error");
+		  return 0;}//正确打开文件
+      	fseek(fp,0L,SEEK_END);
+		  long fsize=ftell(fp);
+		  if(fsize==0){
+		  perror("open an empty file");
+		  }
+		  	fseek(fp,0L,SEEK_SET);
+	  int r=0,c=0;  
+	  int  ch;         
+         while(r<MAX_HEI&&(ch=fgetc(fp))!=EOF){
+		 //先进行比较，避免超行了还多录入一个字符  
+         	if(ch=='\n'){r++;c=0;}
+			 else if(ch=='\r'){continue;}
+         	else if(ch=='\t'){
+         		int standard=4-c%4;
+				 while(standard-->0&&c<MAX_LINE-1){
+				 input[r][c++]=' ';	
+				 } }//虽然只要换行就OK了但这个也顺便了,逻辑在于制表符标准有standard判断，没空格一次standrad储存的次数就减一
+         	else if(isprint((unsigned char)ch)){
+			 if(c<MAX_LINE-1){input[r][c++]=(unsigned char)ch;}
+			 }}
+			 if(ferror(fp)){
+			 	perror(" read error");
+			 	fclose(fp);
+				  return 0; }
+			 if((fclose(fp))==EOF){
+			 	perror("close error");//关闭正常
+				 return 0;}
+    if((initscr())==0){return 0;}                                                                                                                                                  
+    raw();                                                                                                                                                                      
+    noecho();                                                                                                                                                                      
+    keypad(stdscr,TRUE);                                                                                                                                                           
+    curs_set(1);                                                                                                                                                                                                                                                                                                                                                    
+                                                                                                                                                    
+    int pos=0,hei=0,y=1,x=1; 
+	int top =0,left =0;                                                                                                                                                       
+    for(;;){                                                                                                                                                                       
+        int row,col;                                                                                                                                                               
+        getmaxyx(stdscr,row,col);                                                                                                                                                  
+        int v_row=row-y-1,v_col=col-x-1;                                                                                                                                          
+        erase();          
+		if(hei<top)top=hei;else if(hei>=top+v_row)top=hei-v_row+1;
+		if(pos<left)left=pos; else if(pos>=left+v_col)left=pos-v_col+1;                                                                                                                                                        
+        for( r=0;r<v_row && top+r< MAX_HEI;r++){                                                                                                                                    
+        for( c=0;c<v_col && left+c<MAX_LINE-1;c++){                                                                                                                                    
+                
+	              ch=(unsigned char)input[top+r][left+c];                                                                                                                       
+                mvaddch(y+r,x+c,ch=='\0'?' ':ch);                                                                                                                                  
+                }}refresh(); move(y+hei-top,x+pos-left);                                                                                                                                                                 
+        int lm=getch();
+		if(lm==17)break;                                                                                                                                                            
+        size_t length=(size_t)strlen(input[hei]);                                                                                                                                     
+        switch(lm){                                                                                                                                                                
+                case KEY_UP:                                                                                                                                                       
+                        if(hei>0){
+						hei--;pos=(int)strlen(input[hei]);}break; 
+						                                                                                                                                     
+                case KEY_DOWN:                                                                                                                                                     
+                if(hei<MAX_HEI-1){
+				hei++;pos=(int)strlen(input[hei]);}
+				break; 
+				                                                                                                                                     
+                case KEY_LEFT:                                                                                                                                                     
+                        if(pos>0)pos--;                                                                                                                                            
+                        else if(hei>0){hei--;pos=(int)strlen(input[hei]);}                                                                                                                     
+                        break;
+						                                                                                                                                                     
+                case KEY_RIGHT:                                                                                                                                                    
+                        if(pos<length)pos++;                                                                                                                                   
+                        else if(hei<MAX_HEI-1){pos=0;hei++;}                                                                                                                      
+                        break;                                                                                                                                                     
+                        default :                                                                                                                                                  
+                                if(lm>=0&&lm<=UCHAR_MAX&&isprint((unsigned char)lm)){ 
+                                char *line=input[hei];	
+								if(length>=MAX_LINE-1||pos<0||(size_t)pos>length){
+									beep();break;
+								}						
+									
+									 memmove(line+pos+1,line+pos,length-pos+1);                                                                                        
+                                        line[pos++]=(unsigned char)lm;                                                                                                                                                                                                    
+                                        break;                                                                                                                                     
+                                        }}                                                                                                                                          
+                                }                                                                                                                                                       
+                endwin();                                                                                                                                                          
+                return 1;                                                                                                                                                          
+        }心得：这次把之前的逻辑彻底改了，把所有的input看作一个大数组然后在数组对Buffer指针里面memmove的逻辑变成了对每一个行指针设置一个对应的行指针line，使得各行之间各自修改，再设置一个length储存每一行长度，把MAX_LINE
+       针对对象变成了length的最大值，而pos则只和length比较实现了每一行动态储存字符，最后再设置一个总的对pos和length的判断防止越界打印，还改了文件的输入方式（之前用cap总大小会时数组输入越界，现在直接把之前书上看到的
+       FILENAME去掉而输入argv[1]）,这次学习了c++带参数的mian函数也收获很大，一直困扰的找不到创建的test.txt问题最后也在ai帮助下找到了正确地址，还是有点心累（过一年真忘了一点东西）
