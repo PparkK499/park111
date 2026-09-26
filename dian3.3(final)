@@ -1,0 +1,621 @@
+#include <ncurses.h>                                                                                                                                                               
+#include <string.h>                                                                                                                                                                
+#include <ctype.h>                                                                                                                                                                 
+#include <limits.h>                                                                                                                                                                
+#include<stdio.h>                                                                                                                                                                                   
+#define MAX_LINE 256                                                                                                                                                               
+#define MAX_HEI 64                                                                                                                                                                 
+
+int sel_active = 0;          
+int sel_start_hei,sel_start_pos;
+int sel_end_hei,sel_end_pos;
+
+#define CLIP_BUF_SIZE 4096
+char clip_buf[CLIP_BUF_SIZE]; 
+int cllen = 0;
+                    
+int savetxt(char *fname,char input[][MAX_LINE],int fcount){
+	FILE *fp; 
+	if((fp=fopen(fname,"wb"))==NULL){
+		perror("open error");
+		return -1;}
+	for(int i=0;i<fcount;i++){
+		size_t length=(size_t)strlen(input[i]);
+		if((fwrite(input[i],1,length,fp))!=length){
+			fclose(fp);
+			return -1;}
+		if(i<fcount-1){
+			fputc('\n',fp);
+		}}
+	 if((fclose(fp))==EOF){
+			 	perror("close error");
+				 return -1;}
+				 return 0;
+}					
+
+static void draw_status(int row,int col,const char *filename,int flag,const char *message,int cursor_row,int cursor_col)
+{
+    char status[512];
+    //临时消息
+    if (message != NULL && message[0] != '\0') {
+        snprintf(status, sizeof(status), "%s", message);
+    } else {
+        snprintf(status,sizeof(status),"Editing | %s | %s | %d:%d",filename,flag ? "Modified" : "Saved",cursor_row + 1,cursor_col + 1);}
+    attron(A_REVERSE);
+    mvhline(row - 1, 0, ' ', col);
+    //清空前一个状态
+    mvaddnstr(row - 1, 0, status, col);
+    //只要调整到最下面一行就可以了
+    attroff(A_REVERSE);
+}				
+
+//默认y=1,x=1就不输入了
+static int find_tpart(char * target,int row,int col,char input[][MAX_LINE],int fcount,int cishu){
+	if (target == NULL || input == NULL || fcount <= 0) {
+        return 0;}
+	
+	size_t num=(size_t)strlen(target);
+	
+	if (num == 0) {
+        return 0;}
+      //hei=-1与pos=-1可以避免没找到也高亮  
+	int hei=-1,pos=-1,top=0,left=0,v_row=row-2,v_col=col-2,ch,zd=0;
+	
+	for (int m = 0; m < fcount; m++) {
+        char *match = input[m];
+while( (match = strstr(match, target)) != NULL )
+        {
+            zd++;
+            if(zd == cishu)
+            {
+                hei = m;
+                pos = (int)(match - input[m]);
+                goto found; // 命中目标匹配，跳出全部循环
+            }
+            match += 1; 
+        }
+    }
+
+
+found:
+        if (hei< 0) {return 0;}
+        
+	
+	if(hei<top)top=hei;else if(hei>=top+v_row)top=hei-v_row+1;
+		if(pos<left)left=pos; else if(pos>=left+v_col)left=pos-v_col+1;                                                                                                                                                        
+        for(int r=0;r<v_row && top+r<fcount;r++){                                                                                                                                    
+        for(int c=0;c<v_col && left+c<strlen(input[top+r])+1;c++){                                                                                                                                    
+                if(top+r==hei&&pos<=left+c&&left+c<pos+(int)num){
+                attron(A_STANDOUT);
+				ch=(unsigned char)input[top+r][left+c];                                                                                                                       
+                mvaddch(1+r,1+c,ch=='\0'?' ':ch); 
+				attroff(A_STANDOUT);}
+	              else {
+				  ch=(unsigned char)input[top+r][left+c];                                                                                                                       
+                mvaddch(1+r,1+c,ch=='\0'?' ':ch); }                                                                                                                                
+                }}move(1+hei-top,1+pos-left);refresh();
+				return 1;
+				}
+				
+int copy(char input[][MAX_LINE],int fcount,int shei,int spos,int ehei,int epos,char *clip,int clmax,int *out_len)
+{
+    int idx = 0;
+    *out_len = 0;
+    //应对方向键左移的时候，交换起始
+    if(shei > ehei || (shei == ehei && spos > epos)){
+        int th = shei; int tp = spos;
+        shei = ehei; spos = epos;
+        ehei = th; epos = tp;
+    }
+//即使只有一行也ok
+    for(int h = shei; h <= ehei; h++)
+    {
+        char *line = input[h];
+        int length = (int)strlen(line);
+        int cbegin = (h == shei) ? spos : 0;
+        int cend   = (h == ehei) ? epos : length;
+
+        for(int c = cbegin; c < cend; c++)
+        {
+            if(idx >= clmax - 2) return 1;
+            clip[idx++]= line[c];
+        }
+        if(h != ehei){ //行之间加换行符
+            if(idx >= clmax -2) return 1;
+            clip[idx++] = '\n';
+        }
+    }
+    clip[idx] = '\0';
+    *out_len = idx;
+    return 0;
+}
+			
+void delete1(char input[][MAX_LINE],int *fcount,int *cur_hei,int *cur_pos,int shei,int spos,int ehei,int epos)
+{
+    //同上
+    if(shei > ehei || (shei == ehei && spos > epos)){
+        int th = shei; int tp = spos;
+        shei = ehei; spos = epos;
+        ehei = th; epos = tp;
+    }
+
+    //同一行只要memmove
+    if(shei == ehei)
+    {
+        char *line = input[shei];
+        int len = (int)strlen(line);
+        memmove(line + spos, line + epos, len - epos + 1);
+        *cur_hei = shei;
+        *cur_pos = spos;
+        return;
+    }
+
+    //跨多行先处理最后一行到第一行，然后把中间删掉，最后总的平移指针
+    input[shei][spos] = '\0';
+    char *last = input[ehei];
+    size_t slen = strlen(input[shei]);
+    if(slen + strlen(last) >= MAX_LINE){
+        
+        input[shei][MAX_LINE-1] = '\0';
+    }else{
+        strcat(input[shei], last);
+    }
+    
+    int delcount = ehei - shei;
+    for(int r = shei+1 ; r < *fcount - delcount; r++)
+    {
+        memcpy(input[r], input[r + delcount], MAX_LINE);
+    }
+    *fcount -= delcount;
+    input[*fcount][0] = '\0';
+
+    *cur_hei = shei;
+    *cur_pos = (int)slen;
+}
+
+//粘贴clip_buf到光标(hei,pos)，修改input,fcount，移动光标
+void paste(char input[][MAX_LINE],int *fcount,int *hei,int *pos, const char *clip,int cllen)
+{
+    if(cllen <=0) return;
+    char tmp_line[MAX_LINE]={0};
+    int cur_h = *hei;
+    int cur_p = *pos;
+
+    //把当前行拆分成两部分
+    strncpy(tmp_line, input[cur_h], MAX_LINE-1);
+    tmp_line[MAX_LINE-1]='\0';
+
+    char head[MAX_LINE]={0},tail[MAX_LINE]={0};
+    strncpy(head, tmp_line, cur_p);
+    head[cur_p] = '\0';
+    strcpy(tail, tmp_line + cur_p);
+
+    //按'\n'分割剪贴板多行
+    const char *p = clip;
+    int lines = 0;
+    //统计剪贴板换行数量
+    for(int i=0;i<cllen;i++){
+        if(clip[i] == '\n') lines++;
+    }
+
+    //腾出空间，向后移动行
+    if(*fcount + lines >= MAX_HEI){
+        beep();
+        return;
+    }
+    for(int r = *fcount; r > cur_h + 1 + lines; r--){
+        memcpy(input[r], input[r-1], MAX_LINE);
+    }
+    *fcount += lines;
+
+    //第一行粘贴：head + 剪贴板第一行
+    const char *nl = strchr(p,'\n');
+    if(nl == NULL){
+        //剪贴板只有单行
+        snprintf(input[cur_h],MAX_LINE,"%s%s%s",head,p,tail);
+        *pos = cur_p + (int)strlen(p);
+        return;
+    }else{
+        size_t part1_len = nl - p;
+        char part1[MAX_LINE]={0};
+        strncpy(part1,p,part1_len);
+        snprintf(input[cur_h],MAX_LINE,"%s%s",head,part1);
+        p = nl +1;
+        //中间行
+        int ins_h = cur_h+1;
+        while(p!=NULL && *p!='\0'){
+            nl = strchr(p,'\n');
+            if(nl != NULL){
+                size_t pl = nl-p;
+                strncpy(input[ins_h],p,pl);
+                input[ins_h][pl]='\0';
+                ins_h++;
+                p = nl+1;
+            }else{
+                //最后一段拼接tail
+                snprintf(input[ins_h],MAX_LINE,"%s%s",p,tail);
+                p = NULL;
+            }
+        }
+        *hei = ins_h;
+        *pos = (int)strlen(input[ins_h]);
+    }
+}
+					                 
+                                                                                                                                              
+int main(int argc,char *argv[])                                                                                                                                                                     
+{                                         
+FILE *fp;                                                                                                                             
+    char input[MAX_HEI][MAX_LINE] = {0};
+	char messa[64]={0};                                                                                                                                           
+
+if(argc<2){
+fprintf(stderr, " %s work\n", argv[0]);return 0;}                                                                                         
+if((fp=fopen(argv[1],"rb"))==NULL){
+      	perror("open error");
+      	strcpy(messa,"open error");
+		  return 0;}//正确打开文件
+      	fseek(fp,0L,SEEK_END);
+		  long fsize=ftell(fp);
+		  if(fsize==0){
+		  perror("open an empty file");
+		  strcpy(messa,"open an empty file");
+		  }
+		  	fseek(fp,0L,SEEK_SET);
+	  int fr=0,fc=0;  
+	  int  ch;
+	  int fcount=1;//记录文本中的行数，来制约hei(文本中取的行数)，并用\n来统计行数          
+         while(fr<MAX_HEI&&(ch=fgetc(fp))!=EOF){
+		 //先进行比较，避免超行了还多录入一个字符  
+         	if(ch=='\n'){
+			 if(fr>=MAX_HEI-1){
+			 	break;}
+			 fr++;fc=0;
+			 fcount=fr+1;
+			 }
+			 else if(ch=='\r'){continue;}
+         	else if(ch=='\t'){
+         		int standard=4-fc%4;
+				 while(standard-->0&&fc<MAX_LINE-1){
+				 input[fr][fc++]=' ';	
+				 } }//虽然只要换行就OK了但这个也顺便了,逻辑在于制表符标准有standard判断，没空格一次standrad储存的次数就减一
+         	else if(isprint((unsigned char)ch)){
+			 if(fc<MAX_LINE-1){input[fr][fc++]=(unsigned char)ch;}
+			 }}
+			 if(ferror(fp)){
+			 	perror(" read error");
+			 	strcpy(messa,"read error");
+			 	fclose(fp);
+				  return 0; }
+			 if((fclose(fp))==EOF){
+			 	perror("close error");//关闭正常
+			 	strcpy(messa,"close error");
+				 return 0;}
+    if((initscr())==0){return 0;}                                                                                                                                                  
+    raw();                                                                                                                                                                      
+    noecho();                                                                                                                                                                      
+    keypad(stdscr,TRUE);                                                                                                                                                           
+    curs_set(1);                                                                                                                                                                                                                                                                                                                                                    
+                                                                                                                                                    
+    int pos=0,hei=0,y=1,x=1,flag=0,getout=0,sig=0,find=0; 
+	int top =0,left =0;                                                                                                                                                       
+    for(;;){                                                                                                                                                                       
+        int row,col;                                                                                                                                                               
+        getmaxyx(stdscr,row,col);                                                                                                                                                  
+        int v_row=row-y-1,v_col=col-x-1;                                                                                                                                          
+        erase();          
+		if(hei<top)top=hei;else if(hei>=top+v_row)top=hei-v_row+1;
+		if(pos<left)left=pos; else if(pos>=left+v_col)left=pos-v_col+1;                                                                                                                                                        
+                for(int r=0;r<v_row && top+r<fcount;r++){
+            int real_h = top + r;
+            int line_len = (int)strlen(input[real_h]);
+            for(int c=0;c<v_col;c++){
+                int real_c = left + c;
+                int ch;
+                if(real_c >= line_len)
+                    ch = ' ';
+                else
+                    ch = (unsigned char)input[real_h][real_c];
+
+                int in_sel = 0;
+                if(sel_active)
+                {
+                    int sh=sel_start_hei, sp=sel_start_pos;
+                    int eh=hei, ep=pos;
+                    if(sh>eh || (sh==eh && sp>ep)){
+                        int th=sh;int tp=sp;
+                        sh=eh;sp=ep;eh=th;ep=tp;
+                    }
+                    if( (real_h > sh && real_h < eh) ){
+                        in_sel =1;
+                    }else if(real_h == sh && real_h == eh){
+                        if(real_c >= sp && real_c < ep) in_sel=1;
+                    }else if(real_h == sh){
+                        if(real_c >= sp) in_sel =1;
+                    }else if(real_h == eh){
+                        if(real_c < ep) in_sel =1;
+                    }
+                }
+
+                if(in_sel){
+                    attron(A_STANDOUT);
+                    mvaddch(y+r, x+c, ch);
+                    attroff(A_STANDOUT);
+                }else{
+                    mvaddch(y+r, x+c, ch);
+                }
+            }
+        }
+
+				draw_status(row,col,argv[1],flag,messa,hei,pos); 
+			 move(y+hei-top,x+pos-left); 	refresh();                                                                                                                                                                
+                                                                                                                                                                  
+          int lm=getch();
+          
+		char *line=input[hei];                                                                                                                                    
+        switch(lm){                                                                                                                                                                
+                case KEY_UP:                                                                                                                                                       
+                        if(hei>0){
+						hei--;pos=(int)strlen(input[hei]);}
+						messa[0]='\0';
+						break; 
+						                                                                                                                                     
+                case KEY_DOWN:                                                                                                                                                     
+                if(hei<fcount-1){
+				hei++;pos=(int)strlen(input[hei]);}
+				messa[0]='\0';
+				break; 
+				                                                                                                                                     
+                case KEY_LEFT:                                                                                                                                                     
+                        if(pos>0)pos--;                                                                                                                                            
+                        else if(hei>0){hei--;pos=(int)strlen(input[hei]);}
+						strcpy(messa,"\0");                                                                                                                     
+                        break;
+						                                                                                                                                                     
+                case KEY_RIGHT:                                                                                                                                                    
+                        if(pos<(int)strlen(input[hei]))pos++;                                                                                                                                   
+                        else if(hei<fcount-1){pos=0;hei++;} 
+						messa[0]='\0';                                                                                                                     
+                        break;
+                        
+                case KEY_DC:{
+                	sel_active=0;
+                	int change =0;
+					size_t length=(size_t)strlen(input[hei]);
+                    if((size_t)pos<length){memmove(line+pos,line+pos+1,length-pos);change=1;}
+                    //在行末尾会把\n删掉需要处理
+					else if(hei<fcount-1){
+						if((length+(size_t)strlen(input[hei+1]))>=MAX_LINE){beep();break;}
+					memcpy(line+length,input[hei+1],strlen(input[hei+1])+1);
+					for (int r = hei + 1; r < fcount - 1; r++) {
+            memcpy(input[r], input[r + 1], MAX_LINE);}
+        input[fcount - 1][0] = '\0';//和下面所有文件外的行一样操作
+        fcount--;change=1;	}
+				if(change){
+				flag=1;sig=0; 
+				messa[0]='\0';}
+				break;   }
+				 
+				case KEY_BACKSPACE:
+                case 127:
+                case '\b':{
+                	sel_active=0;
+                int	change=0;
+				size_t length=(size_t)strlen(input[hei]);
+				if(pos>0){memmove(line+pos-1,line+pos,length-pos+1);pos--;change=1;}
+				//在行头会把上一行\n删掉需要处理 
+				else if(hei>0){
+					size_t p_len = strlen(input[hei - 1]);
+					if ( p_len + length >= MAX_LINE) {
+            beep();break;}
+			memcpy(input[hei-1]+ p_len,line,length+1);		
+					for(int r=hei;r<fcount-1;r++){
+					memcpy(input[r], input[r + 1], MAX_LINE);}
+					input[fcount - 1][0] = '\0';
+                 fcount--;
+				 hei--;pos=(int)p_len;change=1;}
+				if(change){
+				flag=1;sig=0; 
+			     messa[0]='\0';}
+				break;}	    
+                        
+				case '\n':
+				case '\r':
+				case KEY_ENTER:{
+					sel_active=0;
+				size_t length=(size_t)strlen(input[hei]);
+				if(fcount>=MAX_HEI){beep();break;}
+					size_t r_len = length - (size_t)pos;
+					//往后平移每一行
+				for(int r=fcount;r>hei+1;r--){
+					memcpy(input[r],input[r-1],MAX_LINE);}
+					memmove(input[hei+1],input[hei]+pos,r_len+1);
+					input[hei][pos]='\0';
+					fcount++;hei++;pos=0;
+				flag=1;sig=0; 
+				messa[0]='\0';
+								break;}
+				 
+				 case 19:
+				 	if (savetxt(argv[1], input, fcount) != 0) {
+    strcpy(messa,"save error");}     
+     else {flag=0;sig=0;
+	 strcpy(messa,"saved");}
+	  break;
+				 
+			
+case 14 : { // 按ctrln开始选区，再按一次结束
+    if(sel_active == 0){
+        sel_start_hei = hei;
+        sel_start_pos = pos;
+        sel_active = 1;
+        messa[0]='\0';
+    }else{
+        sel_active = 0;
+    }
+    break;
+}
+
+case 3: {
+    if(!sel_active){
+        strcpy(messa,"no selection");
+        break;
+    }
+    sel_end_hei = hei;
+    sel_end_pos = pos;
+    int ret = copy(input,fcount,sel_start_hei,sel_start_pos,sel_end_hei,sel_end_pos,clip_buf,CLIP_BUF_SIZE,&cllen);
+    if(ret == 1){
+        strcpy(messa,"clipboard full");
+    }else{
+        strcpy(messa,"copied");
+    }
+    //复制不取消选区，可以多次复制
+    break;
+}
+
+case 24: {
+    if(!sel_active){
+        strcpy(messa,"no selection");
+        break;
+    }
+    sel_end_hei = hei;
+    sel_end_pos = pos;
+    int ret = copy(input,fcount,sel_start_hei,sel_start_pos,sel_end_hei,sel_end_pos,clip_buf,CLIP_BUF_SIZE,&cllen);
+    if(ret ==1){
+        strcpy(messa,"clipboard full");
+        break;
+    }
+    
+    delete1(input,&fcount,&hei,&pos,sel_start_hei,sel_start_pos,sel_end_hei,sel_end_pos);
+    flag = 1; sig =0;
+    strcpy(messa,"cut");
+    sel_active = 0; 
+	//剪切完毕清除选区
+    break;
+}
+//选择ctrlg是为了屏蔽系统的黏贴功能
+case 7: { 
+    if(cllen <= 0){
+        strcpy(messa,"clip empty");
+        break;
+    }
+    paste(input,&fcount,&hei,&pos,clip_buf,cllen);
+    flag =1; sig=0;
+    messa[0]='\0';
+    sel_active = 0;
+	 //粘贴取消选区
+    break;
+}	
+		 	
+				 case 6:{
+				 char status1[128],status2[32];
+char message[32]="find mode";
+           snprintf(status1, sizeof(status1), "%s", message);
+				int i=0,cishu=1;char target[32]={0};int tag=0;
+				
+				 for(;;){
+           snprintf(status2, sizeof(status2), "%s", target); 
+    attron(A_REVERSE);
+    mvhline(row - 1, 0, ' ', col);
+    mvaddnstr(row - 1, 0, status1, col);
+    
+     mvhline(row - 2, 0, ' ', col);
+     mvaddnstr(row - 2, 0, status2, col);
+    attroff(A_REVERSE);
+    refresh();
+    
+    int hy=getch();
+				 switch(hy){
+				 	case '\n':
+				 	case '\r':
+					case KEY_ENTER:{
+					int ret = find_tpart(target,row,col,input,fcount,cishu);
+                if(ret == 0){
+                    snprintf(status1, sizeof(status1), "%s : not found", message);
+                }else{
+                    snprintf(status1, sizeof(status1), "%s", message);
+                }
+                break;}
+    
+				 	
+				 	case 27:{
+            nodelay(stdscr, TRUE);
+            int next_ch = getch();
+    nodelay(stdscr, FALSE);
+    if(next_ch == ERR){
+        tag = 1;
+    }
+    break;
+}
+				 	
+				 	case 1:{
+						cishu++;
+						int ret = find_tpart(target,row,col,input,fcount,cishu);
+                if(ret == 0){
+                    snprintf(status1, sizeof(status1), "%s : not found", message);
+                }else{
+                    snprintf(status1, sizeof(status1), "%s", message);
+                }
+                break;}
+				 	
+				 	case 2:{ 
+                int ret;
+                if(cishu>1){
+                    cishu--;
+                    ret = find_tpart(target,row,col,input,fcount,cishu);
+                }else{
+                    ret = 0;
+                }
+                if(ret == 0){
+                    snprintf(status1, sizeof(status1), "%s : not found", message);
+                }else{
+                    snprintf(status1, sizeof(status1), "%s", message);
+                }
+                break;}
+				 	
+			        case KEY_BACKSPACE:
+                    case 127:
+                    case '\b':
+                if(i > 0){
+                    i--;
+                    target[i] = '\0';}
+                    snprintf(status1, sizeof(status1), "%s", message);
+                break;
+				 	
+				 	default:
+				 		if(i<31){
+				 	target[i++]=(char)hy;target[i]='\0';}
+					snprintf(status1, sizeof(status1), "%s", message); 
+					 break;
+				 		
+				 }if(tag)break;
+				 }
+				 break;}
+				 
+				 	case 17:
+				 	if(flag){	
+					 if(sig==0){strcpy(messa,"not saved");sig=1;}
+					 else{
+					 	getout=1;
+					 }}else getout=1;
+					 break;
+					 	                                                                                                                                                     
+                        default :
+						       size_t length=(size_t)strlen(input[hei]);                                                                                                                                           
+                                if(lm>=0&&lm<=UCHAR_MAX&&isprint((unsigned char)lm)){ 	
+								if(length>=MAX_LINE-1||pos<0||(size_t)pos>length){
+									beep();break;
+								}						
+									
+									 memmove(line+pos+1,line+pos,length-pos+1);                                                                                        
+                                        line[pos++]=(unsigned char)lm;                                                                                                                                                                                                    
+                                       
+									   flag=1;sig=0;
+                                       messa[0]='\0';
+									    break;                                                                                                                                     
+                                        }}                                                                                                                                          
+                                if(getout)break;
+								}				                                                                                                                                                      
+                endwin();                                                                                                                                    
+                return 0;//和前面的保存失败有所区别                                                                                                                                                          
+        }心得：要来不及写了，这次重点改了和一些系统按键重复的比如ctrlv和'\r'
